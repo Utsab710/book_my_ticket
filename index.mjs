@@ -11,10 +11,14 @@ import pg from "pg";
 import { dirname } from "path";
 import { fileURLToPath } from "url";
 import cors from "cors";
+import bcrypt from "bcrypt";
+import jwt from "jsonwebtoken";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const port = process.env.PORT || 8080;
+
+const JWT_SECRET = "JWT_SECRET_KEY";
 
 // Equivalent to mongoose connection
 // Pool is nothing but group of connections
@@ -22,10 +26,10 @@ const port = process.env.PORT || 8080;
 // the pooler will keep that connection open for sometime to other clients to reuse
 const pool = new pg.Pool({
   host: "localhost",
-  port: 5433,
+  port: 5432,
   user: "postgres",
   password: "postgres",
-  database: "sql_class_2_db",
+  database: "bookmyticketdb",
   max: 20,
   connectionTimeoutMillis: 0,
   idleTimeoutMillis: 0,
@@ -33,10 +37,73 @@ const pool = new pg.Pool({
 
 const app = new express();
 app.use(cors());
+app.use(express.json());
 
 app.get("/", (req, res) => {
   res.sendFile(__dirname + "/index.html");
 });
+
+app.post("/register", async (req, res) => {
+  try {
+    const { username, email, password } = req.body;
+
+    if (!username || !email || !password) {
+      return res.status(400).send({ error: "All fields are required" });
+    }
+
+    const existing = await pool.query(
+      "SELECT * FROM users WHERE email = $1 OR username = $2",
+      [email, username],
+    );
+    if (existing.rowCount > 0) {
+      return res.status(400).send({ error: "User already exists" });
+    }
+
+    const saltRounds = 10;
+    const passwordHash = await bcrypt.hash(password, saltRounds);
+
+    const result = await pool.query(
+      "INSERT INTO users (username, email, password_hash) VALUES ($1, $2, $3) RETURNING id",
+      [username, email, passwordHash],
+    );
+
+    const newUser = result.rows[0];
+
+    const accessToken = jwt.sign(
+      {
+        id: newUser.id,
+        username: newUser.username,
+      },
+      JWT_SECRET,
+      { expiresIn: "5m" },
+    );
+
+    const refreshToken = jwt.sign(
+      {
+        id: newUser.id,
+        username: newUser.username,
+      },
+      JWT_SECRET,
+      { expiresIn: "1d" },
+    );
+
+    await pool.query("UPDATE users SET refresh_token = $1 WHERE id = $2", [
+      refreshToken,
+      newUser.id,
+    ]);
+
+    res.status(201).send({
+      message: "User registered successfully",
+      user: newUser,
+      accessToken,
+      refreshToken,
+    });
+  } catch (error) {
+    console.log(error);
+    res.status(500).send({ error: "Internal server error" });
+  }
+});
+
 //get all seats
 app.get("/seats", async (req, res) => {
   const result = await pool.query("select * from seats"); // equivalent to Seats.find() in mongoose
