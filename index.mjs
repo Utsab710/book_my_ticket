@@ -13,6 +13,7 @@ import { fileURLToPath } from "url";
 import cors from "cors";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
+import { error } from "console";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -103,6 +104,101 @@ app.post("/register", async (req, res) => {
     res.status(500).send({ error: "Internal server error" });
   }
 });
+
+app.post("/login", async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).send({
+        error: " Email and password are required",
+      });
+    }
+    const result = await pool.query("SELECT * FROM users WHERE email = $1", [
+      email,
+    ]);
+
+    if (result.rowCount === 0) {
+      return res.status(401).send({
+        error: "Invalid email or password",
+      });
+    }
+    const user = result.rows[0];
+
+    const isPasswordValid = await bcrypt.compare(password, user.password_hash);
+
+    if (!isPasswordValid) {
+      return res.status(401).send({
+        error: "Invalid email or password",
+      });
+    }
+
+    const accessToken = jwt.sign(
+      {
+        id: user.id,
+        username: user.username,
+      },
+      JWT_SECRET,
+      { expiresIn: "5m" },
+    );
+
+    const refreshToken = jwt.sign(
+      {
+        id: user.id,
+        username: user.username,
+      },
+      JWT_SECRET,
+      { expiresIn: "1d" },
+    );
+
+    await pool.query("UPDATE users SET refresh_token = $1 WHERE id = $2", [
+      refreshToken,
+      user.id,
+    ]);
+
+    res.status(200).send({
+      message: "Login successful",
+      user: {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+      },
+      accessToken,
+      refreshToken,
+    });
+  } catch (error) {
+    console.log(error);
+    res.status(500).send({ error: error.message });
+  }
+});
+
+const authenticate = (req, res, next) => {
+  const authHeader = req.headers["authorization"];
+
+  if (!authHeader) {
+    return res.status(401).send({
+      error: "No token is set",
+    });
+  }
+
+  const token = authHeader.split(" ")[1];
+
+  if (!token) {
+    return res.status(401).send({
+      error: "Token is missing",
+    });
+  }
+
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    req.user = decoded;
+    next();
+  } catch (error) {
+    return res.status(401).send({
+      error: "Invalid token",
+    });
+  }
+};
 
 //get all seats
 app.get("/seats", async (req, res) => {
