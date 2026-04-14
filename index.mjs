@@ -200,6 +200,47 @@ const authenticate = (req, res, next) => {
   }
 };
 
+app.post("/refresh-token", async (req, res) => {
+  try {
+    const { refreshToken } = req.body;
+
+    if (!refreshToken) {
+      return res.status(400).send({
+        error: "Refresh token is required",
+      });
+    }
+
+    const decoded = jwt.verify(refreshToken, JWT_SECRET);
+
+    const result = await pool.query(
+      "SELECT * FROM users WHERE id = $1 AND  refresh_token = $2",
+      [decoded.id, refreshToken],
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(401).send({
+        error: "Invalid refresh token",
+      });
+    }
+
+    const newAccessToken = jwt.sign(
+      {
+        id: decoded.id,
+        username: decoded.username,
+      },
+      JWT_SECRET,
+      { expiresIn: "5m" },
+    );
+    res.status(200).send({
+      accessToken: newAccessToken,
+    });
+  } catch (error) {
+    return res.status(401).send({
+      error: "Invalid or expired refresh token",
+    });
+  }
+});
+
 //get all seats
 app.get("/seats", async (req, res) => {
   const result = await pool.query("select * from seats"); // equivalent to Seats.find() in mongoose
