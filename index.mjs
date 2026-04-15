@@ -241,6 +241,39 @@ app.post("/refresh-token", async (req, res) => {
   }
 });
 
+app.put("/book/:id", authenticate, async (req, res) => {
+  try {
+    const id = req.params.id;
+    const userId = req.user.id;
+    const name = req.user.username;
+
+    const conn = await pool.connect();
+    await conn.query("BEGIN");
+
+    const sql = "SELECT * FROM seats where id = $1 and isbooked = 0 FOR UPDATE";
+    const result = await conn.query(sql, [id]);
+
+    if (result.rowCount === 0) {
+      await conn.query("ROLLBACK");
+      conn.release();
+      return res.status(409).send({ error: "Seat already booked" });
+    }
+
+    const sqlU =
+      "update seats set isbooked = 1, name = $2, booked_by = $3 where id = $1";
+    await conn.query(sqlU, [id, name, userId]);
+
+    await conn.query("COMMIT");
+    conn.release();
+    res.status(200).send({
+      message: `Seat ${id} booked successfully`,
+      bookedBy: { id: userId, username: req.user.username },
+    });
+  } catch (error) {
+    res.status(500).send({ error: error.message });
+  }
+});
+
 //get all seats
 app.get("/seats", async (req, res) => {
   const result = await pool.query("select * from seats"); // equivalent to Seats.find() in mongoose
@@ -249,7 +282,7 @@ app.get("/seats", async (req, res) => {
 
 //book a seat give the seatId and your name
 
-app.put("/:id/:name", async (req, res) => {
+app.put("/:id/:name", authenticate, async (req, res) => {
   try {
     const id = req.params.id;
     const name = req.params.name;
